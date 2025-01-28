@@ -125,8 +125,6 @@ def process_csv(input_file):
         return result_df
     else:
         return pd.DataFrame(columns=['Email', 'Label'])
-
-# Main function with real-time validation
 def main():
     load_css()
     st.title("Email Verification Tool")
@@ -140,10 +138,13 @@ def main():
                 label = label_email(email)
                 if label == "Valid":
                     st.success(f"{email} is a valid email address.")
+                    # Proceed with valid email logic (e.g., save to database, etc.)
                 elif label == "Temporary/Risky":
                     st.warning(f"{email} is a disposable/temporary email.")
+                    # Handle temporary/risky email logic (e.g., flag it or ask for confirmation)
                 else:
                     st.error(f"{email} is invalid.")
+                    # Handle invalid email logic (e.g., prevent submission, prompt for a new email)
 
     with t2:
         input_file = st.file_uploader("Upload a CSV file", type=["csv"])

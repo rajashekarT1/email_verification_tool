@@ -1,5 +1,5 @@
+dnspython
 pandas
 streamlit
 streamlit-extras
 whois
-python-whois
