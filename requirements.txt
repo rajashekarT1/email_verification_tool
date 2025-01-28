@@ -1,10 +1,5 @@
-python-whois
-dnspython
-requests
+pandas
 streamlit
 streamlit-extras
-jellyfish
-numpy
-pandas
-shutil
-csv
+whois
+python-whois
