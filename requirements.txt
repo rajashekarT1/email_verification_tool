@@ -1,5 +1,8 @@
 streamlit
-jellyfish
 pandas
 python-whois
 streamlit-extras
+dnspython
+requests
+jellyfish
+numpy
