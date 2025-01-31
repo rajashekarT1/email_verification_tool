@@ -1,164 +1,177 @@
 import csv
-from tempfile import NamedTemporaryFile
-import shutil
 import pandas as pd
 import source_code as sc
 from suggestions import suggest_email_domain
 import whois
-from domains import emailDomains
 import streamlit as st
+from domains import emailDomains
+from concurrent.futures import ThreadPoolExecutor
 from streamlit_extras.metric_cards import style_metric_cards
 
+# Caching Whois information to prevent redundant API calls
+@st.cache_data
+def get_whois_info(domain_part):
+    try:
+        return whois.whois(domain_part)
+    except Exception as e:
+        return None  # Handle errors gracefully
+
 st.set_page_config(
-    page_title="Email Verification",
+    page_title="Email verification",
     page_icon="✅",
     layout="centered",
 )
 
-# Custom CSS for styling
-def load_css():
-    st.markdown(
-        """
-        <style>
-        /* General Page Style */
-        body {
-            font-family: 'Arial', sans-serif;
-            background-color: #f9f9f9;
-        }
-
-        /* Title Styling */
-        .stTitle {
-            color: #333;
-            font-size: 2rem;
-            font-weight: bold;
-            text-align: center;
-        }
-
-        /* Info Box Styling */
-        .stAlert {
-            background-color: #e6f7ff;
-            border-left: 6px solid #1890ff;
-            padding: 10px;
-        }
-
-        /* Tabs Styling */
-        .stTabs [data-baseweb="tab"] {
-            font-weight: bold;
-            color: #1890ff;
-        }
-
-        .stTabs [data-baseweb="tab"]:hover {
-            background-color: #e6f7ff;
-        }
-
-        /* Button Styling */
-        .stButton>button {
-            background-color: #4CAF50;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            padding: 10px 20px;
-            cursor: pointer;
-        }
-
-        .stButton>button:hover {
-            background-color: #45a049;
-        }
-
-        /* Metric Cards */
-        .stMetric {
-            border-radius: 8px;
-            background-color: #f0f0f0;
-            box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
-            padding: 15px;
-        }
-
-        /* DataFrame Table Styling */
-        .stDataFrame table {
-            border: 1px solid #ddd;
-            border-collapse: collapse;
-            width: 100%;
-        }
-
-        .stDataFrame th, .stDataFrame td {
-            text-align: left;
-            padding: 8px;
-        }
-
-        .stDataFrame tr:nth-child(even) {
-            background-color: #f2f2f2;
-        }
-
-        /* File Uploader */
-        .stFileUploader label {
-            font-size: 1rem;
-            color: #555;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True
-    )
-# Updated function to label emails
 def label_email(email):
-    if not sc.is_valid_email(email):  # Syntax validation
-        return "Invalid"
-    domain_part = email.split('@')[1]
-    if sc.is_disposable(domain_part):  # Check if the domain is disposable
-        return "Temporary/Risky"
-    if not sc.has_valid_mx_record(domain_part):  # Check MX record
-        return "Invalid"
-    if not sc.verify_email(email):  # Verify email via SMTP
-        return "Invalid"
-    return "Valid"
+    if not sc.is_valid_email(email):
+        return email, "Invalid"
+    if not sc.has_valid_mx_record(email.split('@')[1]):
+        return email, "Invalid"
+    if not sc.verify_email(email):
+        return email, "Unknown"
+    if sc.is_disposable(email.split('@')[1]):
+        return email, "Risky"
+    return email, "Valid"
 
-# Updated bulk processing logic
+# Function to process emails in parallel
+def process_emails_in_parallel(emails):
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        results = list(executor.map(label_email, emails))  # Process emails concurrently
+    return results
+
 def process_csv(input_file):
     if input_file:
         df = pd.read_csv(input_file, header=None)
-        results = []
-        for index, row in df.iterrows():
-            email = row[0].strip()
-            label = label_email(email)
-            results.append([email, label])
+        emails = df[0].tolist()
+
+        results = process_emails_in_parallel(emails)  # Parallel processing
         result_df = pd.DataFrame(results, columns=['Email', 'Label'])
-        result_df.index = range(1, len(result_df) + 1)
+        result_df.index = range(1, len(result_df) + 1)  # Starting index from 1
         return result_df
     else:
         return pd.DataFrame(columns=['Email', 'Label'])
+
+def process_xlsx(input_file):
+    df = pd.read_excel(input_file, header=None)
+    emails = df[0].tolist()
+
+    results = process_emails_in_parallel(emails)  # Parallel processing
+    result_df = pd.DataFrame(results, columns=['Email', 'Label'])
+    result_df.index = range(1, len(result_df) + 1)  # Starting index from 1
+    
+    return result_df
+
+def process_txt(input_file):
+    input_text = input_file.read().decode("utf-8").splitlines()
+    results = process_emails_in_parallel(input_text)  # Parallel processing
+
+    result_df = pd.DataFrame(results, columns=['Email', 'Label'])
+    result_df.index = range(1, len(result_df) + 1)  # Starting index from 1
+    return result_df
+
 def main():
-    load_css()
-    st.title("Email Verification Tool")
- 
+    with open('style.css') as f:
+        st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
+        
+    st.title("Email Verification Tool", help="This tool verifies the validity of an email address.")
+  
     t1, t2 = st.tabs(["Single Email", "Bulk Email Processing"])
 
     with t1:
+        # Single email verification
         email = st.text_input("Enter an email address:")
+
         if st.button("Verify"):
             with st.spinner('Verifying...'):
-                label = label_email(email)
-                if label == "Valid":
-                    st.success(f"{email} is a valid email address.")
-                    # Proceed with valid email logic (e.g., save to database, etc.)
-                elif label == "Temporary/Risky":
-                    st.warning(f"{email} is a disposable/temporary email.")
-                    # Handle temporary/risky email logic (e.g., flag it or ask for confirmation)
-                else:
-                    st.error(f"{email} is invalid.")
-                    # Handle invalid email logic (e.g., prevent submission, prompt for a new email)
+                result = {}
+
+                # Syntax validation
+                result['syntaxValidation'] = sc.is_valid_email(email)
+
+                if result['syntaxValidation']:
+                    domain_part = email.split('@')[1] if '@' in email else ''
+
+                    if not domain_part:
+                        st.error("Invalid email format. Please enter a valid email address.")
+                    else:
+                        # Additional validation for the domain part
+                        if not sc.has_valid_mx_record(domain_part):
+                            st.warning("Not valid: MX record not found.")
+                            suggested_domains = suggest_email_domain(domain_part, emailDomains)
+                            if suggested_domains:
+                                st.info("Suggested Domains:")
+                                for suggested_domain in suggested_domains:
+                                    st.write(suggested_domain)
+                            else:
+                                st.warning("No suggested domains found.")
+                        else:
+                            # MX record validation
+                            result['MXRecord'] = sc.has_valid_mx_record(domain_part)
+
+                            # SMTP validation
+                            if result['MXRecord']:
+                                result['smtpConnection'] = sc.verify_email(email)
+                            else:
+                                result['smtpConnection'] = False
+
+                            # Temporary domain check
+                            result['is Temporary'] = sc.is_disposable(domain_part)
+
+                            # Determine validity status and message
+                            is_valid = (
+                                result['syntaxValidation']
+                                and result['MXRecord']
+                                and result['smtpConnection']
+                                and not result['is Temporary']
+                            )
+
+                            st.markdown("**Result:**")
+
+                            # Display metric cards with reduced text size
+                            col1, col2, col3 = st.columns(3)
+                            col1.metric(label="Syntax", value=result['syntaxValidation'])
+                            col2.metric(label="MxRecord", value=result['MXRecord'])
+                            col3.metric(label="Is Temporary", value=result['is Temporary'])
+            
+                            
+                            # Show SMTP connection status as a warning
+                            if not result['smtpConnection']:
+                                st.warning("SMTP connection not established.")
+                            
+                            # Show domain details in an expander
+                            with st.expander("See Domain Information"):
+                                domain_info = get_whois_info(domain_part)
+                                if domain_info:
+                                    st.write("Registrar:", domain_info.registrar)
+                                    st.write("Server:", domain_info.whois_server)
+                                    st.write("Country:", domain_info.country)
+                                else:
+                                    st.error("Domain information retrieval failed.")
+                            
+                            # Show validity message
+                            if is_valid:
+                                st.success(f"{email} is a Valid email")
+                            else:
+                                st.error(f"{email} is an Invalid email")
+                                if result['is Temporary']:
+                                    st.text("It is a disposable email")
 
     with t2:
-        input_file = st.file_uploader("Upload a CSV file", type=["csv"])
+        # Bulk email processing
+        st.header("Bulk Email Processing")
+        input_file = st.file_uploader("Upload a CSV, XLSX, or TXT file", type=["csv", "xlsx", "txt"])
+
         if input_file:
-            with st.spinner("Processing..."):
-                df = process_csv(input_file)
-            st.success("Processing complete!")
-            st.dataframe(df)
-            st.download_button(
-                label="Download Results",
-                data=df.to_csv(index=False).encode("utf-8"),
-                file_name="email_verification_results.csv",
-                mime="text/csv",
-            )
+            st.write("Processing...")
+            if input_file.type == 'text/plain':
+                result_df = process_txt(input_file)
+            elif input_file.type == 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':
+                result_df = process_xlsx(input_file)
+            else:
+                result_df = process_csv(input_file)
+            
+            st.success("Processing completed. Displaying results:")
+            st.dataframe(result_df)
 
 if __name__ == "__main__":
     main()
