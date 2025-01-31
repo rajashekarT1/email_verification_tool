@@ -1,5 +1,5 @@
-dnspython
-pandas
 streamlit
+jellyfish
+pandas
+python-whois
 streamlit-extras
-whois

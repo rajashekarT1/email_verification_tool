@@ -1,5 +1,7 @@
 from domains import emailDomains
-import jellyfish
+import streamlit as st
+import jellyfish #<--- test the import
+st.write("Jellyfish imported successfully")
 from typing import List
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
@@ -30,7 +32,11 @@ class Trie:
             node = node.children[char]
         return node.word_end
 
-def suggest_email_domain(domain: str, valid_domains: List[str]) -> List[str]:
+
+def suggest_email_domain(domain: str, valid_domains: List[str], distance_threshold=2) -> List[str]:
+    if not domain:
+        return [] # handles empty string input
+
     # Build a trie with valid domains
     trie = Trie()
     for valid_domain in valid_domains:
@@ -40,12 +46,13 @@ def suggest_email_domain(domain: str, valid_domains: List[str]) -> List[str]:
     distances = {}
     with ThreadPoolExecutor(max_workers=np.minimum(16, len(valid_domains))) as executor:
         for valid_domain, distance in zip(valid_domains, executor.map(lambda x: jellyfish.damerau_levenshtein_distance(domain, x), valid_domains)):
-            if distance <= 2:
+            if distance <= distance_threshold:
                 if distance in distances:
                     if valid_domain not in distances[distance]:
                         distances[distance].append(valid_domain)
                 else:
                     distances[distance] = [valid_domain]
+
 
     # Choose the most similar domains based on alphabetical order
     sorted_domains = np.array([])
@@ -58,7 +65,14 @@ def suggest_email_domain(domain: str, valid_domains: List[str]) -> List[str]:
     soundex_domain = jellyfish.soundex(domain)
     phonetically_similar_domains = [d for d in valid_domains if jellyfish.soundex(d) == soundex_domain and d not in sorted_domains]
 
+
     # Combine and return the results
     return sorted_domains + phonetically_similar_domains
 
+if __name__ == "__main__":
+    valid_domains = ["gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "example.com"]
+    test_domains = ["gmai.com", "yaho.com", "outlok.com", "hotmal.com", "exmple.com", "gmaill.cm", "", "test"]
 
+    for test_domain in test_domains:
+        suggestions = suggest_email_domain(test_domain, valid_domains)
+        print(f"Input: {test_domain}, Suggestions: {suggestions}")

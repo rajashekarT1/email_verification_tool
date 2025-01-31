@@ -7,13 +7,20 @@ import streamlit as st
 from domains import emailDomains
 from concurrent.futures import ThreadPoolExecutor
 from streamlit_extras.metric_cards import style_metric_cards
+import os
+
+# Set up for logging
+import logging
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Caching Whois information to prevent redundant API calls
 @st.cache_data
 def get_whois_info(domain_part):
     try:
-        return whois.whois(domain_part)
+        return whois.whois(domain_part, timeout=10)  # Add timeout
     except Exception as e:
+        logging.error(f"Error in get_whois_info for {domain_part}: {e}")
         return None  # Handle errors gracefully
 
 st.set_page_config(
@@ -35,46 +42,62 @@ def label_email(email):
 
 # Function to process emails in parallel
 def process_emails_in_parallel(emails):
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    num_workers = min(16, len(emails)) # Using dynamic number of workers based on number of emails
+    with ThreadPoolExecutor(max_workers=num_workers) as executor:
         results = list(executor.map(label_email, emails))  # Process emails concurrently
     return results
 
 def process_csv(input_file):
     if input_file:
-        df = pd.read_csv(input_file, header=None)
+        try:
+            df = pd.read_csv(input_file, header=None)
+            emails = df[0].tolist()
+
+            results = process_emails_in_parallel(emails)  # Parallel processing
+            result_df = pd.DataFrame(results, columns=['Email', 'Label'])
+            result_df.index = range(1, len(result_df) + 1)  # Starting index from 1
+            return result_df
+        except Exception as e:
+            logging.error(f"Error processing csv file: {e}")
+            return pd.DataFrame(columns=['Email', 'Label'])
+    else:
+        return pd.DataFrame(columns=['Email', 'Label'])
+
+def process_xlsx(input_file):
+    try:
+        df = pd.read_excel(input_file, header=None)
         emails = df[0].tolist()
 
         results = process_emails_in_parallel(emails)  # Parallel processing
         result_df = pd.DataFrame(results, columns=['Email', 'Label'])
         result_df.index = range(1, len(result_df) + 1)  # Starting index from 1
         return result_df
-    else:
+    except Exception as e:
+        logging.error(f"Error processing xlsx file: {e}")
         return pd.DataFrame(columns=['Email', 'Label'])
 
-def process_xlsx(input_file):
-    df = pd.read_excel(input_file, header=None)
-    emails = df[0].tolist()
-
-    results = process_emails_in_parallel(emails)  # Parallel processing
-    result_df = pd.DataFrame(results, columns=['Email', 'Label'])
-    result_df.index = range(1, len(result_df) + 1)  # Starting index from 1
-    
-    return result_df
-
 def process_txt(input_file):
-    input_text = input_file.read().decode("utf-8").splitlines()
-    results = process_emails_in_parallel(input_text)  # Parallel processing
+    try:
+        input_text = input_file.read().decode("utf-8").splitlines()
+        results = process_emails_in_parallel(input_text)  # Parallel processing
 
-    result_df = pd.DataFrame(results, columns=['Email', 'Label'])
-    result_df.index = range(1, len(result_df) + 1)  # Starting index from 1
-    return result_df
+        result_df = pd.DataFrame(results, columns=['Email', 'Label'])
+        result_df.index = range(1, len(result_df) + 1)  # Starting index from 1
+        return result_df
+    except Exception as e:
+        logging.error(f"Error processing txt file: {e}")
+        return pd.DataFrame(columns=['Email', 'Label'])
 
 def main():
-    with open('style.css') as f:
+    # Get the absolute path of the directory containing app.py
+    app_dir = os.path.dirname(os.path.abspath(__file__))
+    css_file_path = os.path.join(app_dir, 'style.css') # Get absolute path to css file
+
+    with open(css_file_path) as f:
         st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
-        
+
     st.title("Email Verification Tool", help="This tool verifies the validity of an email address.")
-  
+
     t1, t2 = st.tabs(["Single Email", "Bulk Email Processing"])
 
     with t1:
@@ -132,12 +155,12 @@ def main():
                             col1.metric(label="Syntax", value=result['syntaxValidation'])
                             col2.metric(label="MxRecord", value=result['MXRecord'])
                             col3.metric(label="Is Temporary", value=result['is Temporary'])
-            
-                            
+
+
                             # Show SMTP connection status as a warning
                             if not result['smtpConnection']:
                                 st.warning("SMTP connection not established.")
-                            
+
                             # Show domain details in an expander
                             with st.expander("See Domain Information"):
                                 domain_info = get_whois_info(domain_part)
@@ -147,7 +170,7 @@ def main():
                                     st.write("Country:", domain_info.country)
                                 else:
                                     st.error("Domain information retrieval failed.")
-                            
+
                             # Show validity message
                             if is_valid:
                                 st.success(f"{email} is a Valid email")
@@ -169,7 +192,7 @@ def main():
                 result_df = process_xlsx(input_file)
             else:
                 result_df = process_csv(input_file)
-            
+
             st.success("Processing completed. Displaying results:")
             st.dataframe(result_df)
 
